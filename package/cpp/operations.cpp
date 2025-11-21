@@ -11,6 +11,7 @@
 #include <sqlite3.h>
 #include <sstream>
 #include <unistd.h>
+#include <dlfcn.h>
 
 using namespace facebook;
 using namespace margelo::nitro;
@@ -20,6 +21,8 @@ namespace margelo::rnnitrosqlite {
 
 std::map<std::string, sqlite3*> dbMap = std::map<std::string, sqlite3*>();
 
+
+
 void sqliteOpenDb(const std::string& dbName, const std::string& docPath) {
   std::string dbPath = get_db_path(dbName, docPath);
 
@@ -28,6 +31,27 @@ void sqliteOpenDb(const std::string& dbName, const std::string& docPath) {
   sqlite3* db;
   int exit = 0;
   exit = sqlite3_open_v2(dbPath.c_str(), &db, sqlOpenFlags, nullptr);
+    
+  // --- START CHANGES ---
+  printf("Opening DB: %s\n", dbName.c_str());
+
+  // 1. Enable extension loading
+  sqlite3_enable_load_extension(db, 1);
+
+  // 2. Define path
+  const char* dylibPath = "@executable_path/Frameworks/vec0";
+  char* errorMsg = nullptr;
+
+  // 3. Load extension
+  int rc = sqlite3_load_extension(db, dylibPath, nullptr, &errorMsg);
+    
+  if (rc != SQLITE_OK) {
+    printf("!!! EXTENSION ERROR: %s !!!\n", errorMsg ? errorMsg : "Unknown");
+    sqlite3_free(errorMsg);
+  } else {
+    printf("!!! EXTENSION LOADED SUCCESS !!!\n");
+  }
+  // --- END CHANGES ---
 
   if (exit != SQLITE_OK) {
     throw NitroSQLiteException(NitroSQLiteExceptionType::DatabaseCannotBeOpened, sqlite3_errmsg(db));

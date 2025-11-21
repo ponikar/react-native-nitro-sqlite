@@ -1,199 +1,107 @@
-/* eslint-disable react-native/no-inline-styles */
-import React, { useCallback, useMemo, useState } from 'react'
-import Chance from 'chance'
-import {
-  ActivityIndicator,
-  ScrollView,
-  Text,
-  TouchableOpacity,
-  View,
-} from 'react-native'
-import { StatusBar } from 'expo-status-bar'
-import { ScreenStyles } from '../styles'
-import { resetLargeDb, largeDb, testDb, resetTestDb } from '../tests/db'
+import React, { useEffect, useState } from 'react'
+import { SafeAreaView, ScrollView, Text, StyleSheet, View } from 'react-native'
+import { open } from 'react-native-nitro-sqlite'
 
-const chance = new Chance()
-const ids = Array(100000)
-  .fill(0)
-  .map(() => chance.integer())
-const stringValue = chance.name()
-const integerValue = chance.integer()
-const doubleValue = chance.floating()
+export const BenchmarkScreen = () => {
+  const [logs, setLogs] = useState<string[]>([])
 
-interface Benchmark {
-  description: string
-  numberOfRuns: number
-  prepare?: () => void
-  run: (i: number) => void
-}
+  // Helper to add messages to the screen
+  const log = (msg: string) => setLogs((prev) => [...prev, msg])
 
-const NUMBER_OF_INSERTS = 10000
-const benchmarks: Benchmark[] = [
-  {
-    description: `Insert ${NUMBER_OF_INSERTS} rows`,
-    numberOfRuns: NUMBER_OF_INSERTS,
-    prepare: () => {
-      resetTestDb()
-      testDb?.execute('DROP TABLE IF EXISTS User;')
-      testDb?.execute(
-        'CREATE TABLE User ( id REAL PRIMARY KEY, name TEXT NOT NULL, age REAL, networth REAL) STRICT;',
-      )
-    },
-    run: (i) => {
-      testDb?.execute(
-        'INSERT INTO User (id, name, age, networth) VALUES(?, ?, ?, ?)',
-        [ids[i], stringValue, integerValue, doubleValue],
-      )
-    },
-  },
-  {
-    description: `SQLite: 1000 INSERTs`,
-    numberOfRuns: 1000,
-    prepare: () => {
-      resetTestDb()
-      testDb?.execute('CREATE TABLE t1(a INTEGER, b INTEGER, c VARCHAR(100));')
-    },
-    run: (i) => {
-      testDb?.execute('INSERT INTO t1 (a, b, c) VALUES(?, ?, ?)', [
-        ids[i],
-        integerValue,
-        stringValue,
-      ])
-    },
-  },
-  {
-    description: 'Load 300k record DB',
-    numberOfRuns: 1,
-    prepare: () => {
-      resetLargeDb()
-    },
-    run: () => {
-      largeDb?.execute('SELECT * FROM Test;')
-    },
-  },
-]
-
-const wait = (ms: number) =>
-  new Promise<void>((resolve) => setTimeout(resolve, ms))
-
-function runBenchmark(benchmark: Benchmark) {
-  return wait(1000).then(() => {
-    console.log(benchmark.description)
-
-    benchmark.prepare?.()
-
-    const start = performance.now()
-    for (let i = 0; i < benchmark.numberOfRuns; i++) benchmark.run(i)
-
-    const end = performance.now()
-
-    const time = (end - start).toFixed(2)
-    console.log(`Took ${time}ms to run!`)
-
-    return time
-  })
-}
-
-export function BenchmarkScreen() {
-  const [results, setResults] = useState<Record<string, string | null>>({})
-  const [isLoading, setIsLoading] = useState(false)
-
-  const startBenchmarks = useCallback(async () => {
-    console.log('START BENCHMARKS')
-
-    setResults({})
-    setIsLoading(true)
-    console.log('--------- BEGINNING NitroSQLite BENCHMARKS ---------')
-
-    async function start(i = 0): Promise<void> {
-      const benchmark = benchmarks[i]!
-
-      setResults((prev) => ({ ...prev, [benchmark.description]: null }))
-      const time = await runBenchmark(benchmark)
-      setResults((prev) => ({ ...prev, [benchmark.description]: time }))
-
-      if (benchmarks[i + 1] != null) return start(i + 1)
-    }
-
-    await start()
-
-    console.log('--------- FINISHED NitroSQLite BENCHMARKS! ---------')
-    setIsLoading(false)
+  useEffect(() => {
+    runVectorTest()
   }, [])
 
-  const Results = useMemo(
-    () =>
-      benchmarks.map(({ description }, index) => {
-        const time = results[description]
-        return (
-          <View
-            style={{ paddingBottom: 10 }}
-            key={index}
-          >
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                marginRight: -20,
-              }}
-            >
-              <Text
-                style={{
-                  fontWeight: 'bold',
-                  textAlign: 'center',
-                  paddingRight: 5,
-                }}
-              >
-                {description}
-              </Text>
+  const runVectorTest = () => {
+    log('📂 Initializing Database...')
 
-              {time === null ? (
-                <ActivityIndicator />
-              ) : (
-                <View style={{ width: 20, height: 20 }} />
-              )}
-            </View>
+    try {
+      const db = open({ name: 'vectors.sqlite' })
 
-            {time != null && (
-              <Text style={{ textAlign: 'center' }}>
-                Took <Text style={{ fontWeight: 'bold' }}>{time}ms</Text>
-              </Text>
-            )}
-          </View>
-        )
-      }),
-    [results],
-  )
+      // 1. Reset Table
+      db.execute('DROP TABLE IF EXISTS memories')
+      db.execute(
+        `create virtual table memories using vec0(sample_embedding float[8])`,
+      )
+      log('✨ Created fresh "memories" table')
+
+      // 2. Insert Meaningful Data (Orthogonal Vectors)
+      // Vector A: "Red"-ish (High 1st dim)
+      const vecRed = new Float32Array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+      // Vector B: "Green"-ish (High 2nd dim)
+      const vecGreen = new Float32Array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+      // Vector C: "Blue"-ish (High 3rd dim)
+      const vecBlue = new Float32Array([0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+      db.execute('INSERT INTO memories(sample_embedding) VALUES (?)', [vecRed.buffer])
+      db.execute('INSERT INTO memories(sample_embedding) VALUES (?)', [vecGreen.buffer])
+      db.execute('INSERT INTO memories(sample_embedding) VALUES (?)', [vecBlue.buffer])
+      log('✅ Inserted 3 vectors: Red(1), Green(2), Blue(3)')
+
+      // 3. Perform Similarity Search
+      // Query: Mostly Red, a little Green ([0.9, 0.1, ...]) -> Should match Red(1) best
+      const queryVector = new Float32Array([0.9, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+      
+      log('🔎 Querying for "Red-ish" vector [0.9, 0.1, 0...]')
+      const results = db.execute(
+        `SELECT rowid, distance FROM memories WHERE sample_embedding MATCH ? ORDER BY distance LIMIT 3`,
+        [queryVector.buffer],
+      )
+
+      log(`� Results (Lower distance = better match):`)
+      results.rows?._array.forEach((row: any) => {
+        let label = 'Unknown'
+        if (row.rowid === 1) label = 'Red'
+        if (row.rowid === 2) label = 'Green'
+        if (row.rowid === 3) label = 'Blue'
+        log(`   ${label} (ID: ${row.rowid}): Distance ${row.distance.toFixed(4)}`)
+      })
+
+      // db.close(); // Optional
+    } catch (e: any) {
+      log(`❌ Error: ${e.message}`)
+    }
+  }
 
   return (
-    <ScrollView contentContainerStyle={ScreenStyles.container}>
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          marginRight: -20,
-          marginBottom: 20,
-        }}
-      >
-        <TouchableOpacity
-          onPressIn={() => {
-            startBenchmarks()
-          }}
-          style={{ paddingRight: 10 }}
-        >
-          <Text style={ScreenStyles.buttonText}>Run benchmarks</Text>
-        </TouchableOpacity>
-
-        {isLoading ? (
-          <ActivityIndicator />
-        ) : (
-          <View style={{ width: 20, height: 20 }} />
-        )}
+    <>
+      <View style={{ backgroundColor: 'black', flex: 1 }}>
+        {logs.map((msg, index) => (
+          <Text
+            key={index}
+            style={styles.logText}
+          >
+            {msg}
+          </Text>
+        ))}
       </View>
-
-      {Results}
-
-      <StatusBar style="auto" />
-    </ScrollView>
+    </>
   )
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#111', // Dark mode
+  },
+  header: {
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+  title: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  scrollView: {
+    flex: 1,
+    padding: 20,
+  },
+  logText: {
+    color: '#0f0', // Matrix green
+    fontFamily: 'Courier',
+    marginBottom: 10,
+    fontSize: 14,
+  },
+})
